@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>揮棒軌跡 + 擊球仰角分析 (Neural Net Web v1)</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f172a;
+      color: #e5e7eb;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    header {
+      padding: 12px 20px;
+      border-bottom: 1px solid #1f2937;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    header h1 {
+      font-size: 20px;
+      margin: 0;
+    }
+    main {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 16px;
+      padding: 16px;
+      flex: 1;
+    }
+    #videoContainer {
+      position: relative;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      border: 1px solid #1f2937;
+      background: #020617;
+    }
+    #view {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    #video {
+      display: none;
+    }
+    #controls {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    button {
+      border: none;
+      padding: 8px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 14px;
+      background: #1d4ed8;
+      color: #e5e7eb;
+      transition: transform 0.1s, box-shadow 0.1s, background 0.1s;
+    }
+    button.secondary {
+      background: #374151;
+    }
+    button.danger {
+      background: #b91c1c;
+    }
+    button:active {
+      transform: translateY(1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4) inset;
+    }
+    #status {
+      font-size: 13px;
+      color: #9ca3af;
+    }
+    #legend {
+      font-size: 13px;
+      color: #9ca3af;
+    }
+    #legend span {
+      display: inline-flex;
+      align-items: center;
+      margin-right: 12px;
+      gap: 4px;
+    }
+    .color-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      display: inline-block;
+    }
+    .bat-color {
+      background: #22c55e;
+    }
+    .ball-color {
+      background: #facc15;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin-top: 6px;
+      background: #020617;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #1f2937;
+    }
+    th, td {
+      padding: 6px 8px;
+      text-align: center;
+      border-bottom: 1px solid #1f2937;
+    }
+    th {
+      background: #030712;
+      font-weight: 600;
+    }
+    tr:nth-child(even) td {
+      background: #020617;
+    }
+    tr:nth-child(odd) td {
+      background: #020617;
+    }
+    footer {
+      font-size: 11px;
+      color: #6b7280;
+      padding: 6px 16px 10px;
+      border-top: 1px solid #1f2937;
+      text-align: right;
+    }
+  </style>
+  <!-- TensorFlow.js & coco-ssd 模型 -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.21.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>⚾ 揮棒軌跡 + 擊球仰角分析 (Neural Net Web v1)</h1>
+    <div id="status">載入模型中…</div>
+  </header>
+
+  <main>
+    <div id="videoContainer">
+      <video id="video" autoplay playsinline></video>
+      <canvas id="view"></canvas>
+    </div>
+
+    <div id="controls">
+      <div class="btn-row">
+        <button id="startBtn">開始鏡頭</button>
+        <button id="stopBtn" class="secondary">暫停畫面</button>
+        <button id="resetSwingBtn" class="secondary">重置目前這球</button>
+        <button id="saveSwingBtn">儲存這球擊球結果</button>
+        <button id="clearAllBtn" class="danger">清空所有紀錄</button>
+      </div>
+      <div id="legend">
+        <span><span class="color-dot bat-color"></span>棒頭軌跡 / baseball bat</span>
+        <span><span class="color-dot ball-color"></span>球軌跡 / sports ball</span>
+      </div>
+      <div style="font-size: 12px; color:#9ca3af; margin-top:4px;">
+        提示：鏡頭畫面要「看得出」棒子跟球，距離不要太遠；光線越穩定，偵測越穩。
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>揮棒時間 (s)</th>
+            <th>棒頭路徑長度 (px)</th>
+            <th>球軌跡點數</th>
+            <th>擊球仰角 (°)</th>
+          </tr>
+        </thead>
+        <tbody id="resultsBody">
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <footer>
+    操作：等左上角顯示模型載入完成 → 按「開始鏡頭」→ 揮棒＋擊球 → 覺得這球 OK 就按「儲存這球擊球結果」。
+  </footer>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('view');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const resultsBody = document.getElementById('resultsBody');
+
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const resetSwingBtn = document.getElementById('resetSwingBtn');
+    const saveSwingBtn = document.getElementById('saveSwingBtn');
+    const clearAllBtn = document.getElementById('clearAllBtn');
+
+    let width = 0;
+    let height = 0;
+    let running = false;
+    let stream = null;
+    let model = null;
+    let modelReady = false;
+
+    let batTrail = [];   // [{x, y, t}]
+    let ballTrail = [];  // [{x, y, t}]
+    const MAX_TRAIL_POINTS = 150;
+
+    const swings = [];
+    let swingId = 1;
+
+    // ===== 載入神經網路模型 =====
+    async function loadModel() {
+      try {
+        statusEl.textContent = '載入神經網路模型中（coco-ssd）…';
+        model = await cocoSsd.load();
+        modelReady = true;
+        statusEl.textContent = '模型已載入 ✅ 按「開始鏡頭」開始使用。';
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = '模型載入失敗：' + err.message;
+      }
+    }
+    loadModel();
+
+    // ===== 啟動 / 停止攝影機 =====
+    async function startCamera() {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          statusEl.textContent = '瀏覽器不支援 getUserMedia，建議用 Chrome。';
+          return;
+        }
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: false
+        });
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+          width = video.videoWidth || 960;
+          height = video.videoHeight || 540;
+          canvas.width = width;
+          canvas.height = height;
+          running = true;
+          statusEl.textContent = modelReady
+            ? '鏡頭已啟動，模型已就緒，開始揮棒吧！'
+            : '鏡頭已啟動，等待模型載入完成…';
+
+          if (modelReady) {
+            detectLoop();
+          }
+        };
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = '無法啟動攝影機：' + err.message;
+      }
+    }
+
+    function stopCamera() {
+      running = false;
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+      }
+      statusEl.textContent = '畫面已暫停。';
+    }
+
+    // ===== 主偵測迴圈：用模型找 baseball bat & sports ball =====
+    async function detectLoop() {
+      if (!running || !modelReady || !model) return;
+      if (video.readyState !== 4) {
+        requestAnimationFrame(detectLoop);
+        return;
+      }
+
+      // 畫原始畫面
+      ctx.drawImage(video, 0, 0, width, height);
+
+      try {
+        const predictions = await model.detect(video);
+
+        let bestBat = null;
+        let bestBatScore = 0;
+        let bestBall = null;
+        let bestBallScore = 0;
+
+        predictions.forEach(pred => {
+          const cls = pred.class;
+          const score = pred.score || 0;
+
+          // 找 baseball bat
+          if (cls === 'baseball bat' && score > bestBatScore) {
+            bestBat = pred;
+            bestBatScore = score;
+          }
+          // 找 sports ball
+          if (cls === 'sports ball' && score > bestBallScore) {
+            bestBall = pred;
+            bestBallScore = score;
+          }
+        });
+
+        const now = performance.now();
+
+        // 處理棒子
+        if (bestBat && bestBatScore > 0.3) {
+          const [x, y, w, h] = bestBat.bbox;
+          const cx = x + w / 2;
+          const cy = y + h / 2;
+
+          // 外框
+          ctx.strokeStyle = '#22c55e';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x, y, w, h);
+
+          // 中心點
+          drawCircle(cx, cy, 6, '#22c55e');
+
+          batTrail.push({ x: cx, y: cy, t: now });
+          if (batTrail.length > MAX_TRAIL_POINTS) batTrail.shift();
+        }
+
+        // 處理球
+        if (bestBall && bestBallScore > 0.3) {
+          const [x, y, w, h] = bestBall.bbox;
+          const cx = x + w / 2;
+          const cy = y + h / 2;
+
+          ctx.strokeStyle = '#facc15';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x, y, w, h);
+
+          drawCircle(cx, cy, 6, '#facc15');
+
+          ballTrail.push({ x: cx, y: cy, t: now });
+          if (ballTrail.length > MAX_TRAIL_POINTS) ballTrail.shift();
+        }
+
+        // 畫軌跡
+        drawTrail(batTrail, '#22c55e');
+        drawTrail(ballTrail, '#facc15');
+
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = '偵測時發生錯誤：' + err.message;
+      }
+
+      requestAnimationFrame(detectLoop);
+    }
+
+    // ===== 畫圖工具 =====
+    function drawCircle(x, y, radius, color) {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
+
+    function drawTrail(points, color) {
+      if (points.length < 2) return;
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = color;
+      ctx.stroke();
+    }
+
+    // ===== 計算指標：路徑長度、時間、擊球仰角 =====
+    function computeDuration(points) {
+      if (points.length < 2) return 0;
+      const t0 = points[0].t;
+      const tN = points[points.length - 1].t;
+      return (tN - t0) / 1000.0; // 秒
+    }
+
+    function computePathLength(points) {
+      if (points.length < 2) return 0;
+      let sum = 0;
+      for (let i = 1; i < points.length; i++) {
+        const dx = points[i].x - points[i - 1].x;
+        const dy = points[i].y - points[i - 1].y;
+        sum += Math.sqrt(dx * dx + dy * dy);
+      }
+      return sum;
+    }
+
+    // 擊球仰角：用球軌跡前幾個點估方向
+    // 注意：畫面座標 y 往下，所以算角度時用 -dy 讓「往上」是正角度
+    function computeLaunchAngle(ballPoints) {
+      if (ballPoints.length < 3) return null;
+      const p0 = ballPoints[0];
+      const idx = Math.min(ballPoints.length - 1, 6);
+      const pN = ballPoints[idx];
+
+      const dx = pN.x - p0.x;
+      const dy = pN.y - p0.y;
+
+      if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) return null;
+
+      const angleRad = Math.atan2(-dy, dx); // -dy：往上為正
+      const angleDeg = angleRad * 180 / Math.PI;
+      return angleDeg;
+    }
+
+    // ===== 揮棒紀錄相關 =====
+    function resetCurrentSwing() {
+      batTrail = [];
+      ballTrail = [];
+      statusEl.textContent = '目前這球已重置，可以重新揮 / 打。';
+    }
+
+    function saveCurrentSwing() {
+      if (batTrail.length < 5) {
+        statusEl.textContent = '棒頭軌跡點太少，無法儲存這球（多揮幾下再按）。';
+        return;
+      }
+      if (ballTrail.length < 3) {
+        statusEl.textContent = '球軌跡點太少，無法估擊球仰角（偵測到的球點不夠）。';
+        return;
+      }
+
+      const duration = computeDuration(batTrail);
+      const pathLen = computePathLength(batTrail);
+      const angle = computeLaunchAngle(ballTrail);
+
+      const swing = {
+        id: swingId++,
+        duration,
+        pathLen,
+        ballPoints: ballTrail.length,
+        angle
+      };
+      swings.push(swing);
+      appendResultRow(swing);
+
+      statusEl.textContent = '已儲存這球結果 ✅ 可以再打一球，或清空重新收集資料。';
+      resetCurrentSwing();
+    }
+
+    function appendResultRow(swing) {
+      const tr = document.createElement('tr');
+      const cells = [
+        swing.id,
+        swing.duration.toFixed(3),
+        swing.pathLen.toFixed(1),
+        swing.ballPoints,
+        swing.angle !== null ? swing.angle.toFixed(1) : 'N/A'
+      ];
+      cells.forEach(text => {
+        const td = document.createElement('td');
+        td.textContent = text;
+        tr.appendChild(td);
+      });
+      resultsBody.appendChild(tr);
+    }
+
+    function clearAllSwings() {
+      swings.length = 0;
+      swingId = 1;
+      resultsBody.innerHTML = '';
+      statusEl.textContent = '所有紀錄已清空。';
+    }
+
+    // ===== Button 綁定 =====
+    startBtn.addEventListener('click', () => {
+      if (!running) {
+        resetCurrentSwing();
+        startCamera();
+        if (modelReady) {
+          detectLoop();
+        }
+      }
+    });
+
+    stopBtn.addEventListener('click', () => {
+      stopCamera();
+    });
+
+    resetSwingBtn.addEventListener('click', () => {
+      resetCurrentSwing();
+    });
+
+    saveSwingBtn.addEventListener('click', () => {
+      saveCurrentSwing();
+    });
+
+    clearAllBtn.addEventListener('click', () => {
+      clearAllSwings();
+    });
+
+    // 初始化提示
+    statusEl.textContent = '載入模型中… 請稍候，看到「模型已載入 ✅」就可以按開始鏡頭。';
+  </script>
+</body>
+</html>
