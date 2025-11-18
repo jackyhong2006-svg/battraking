@@ -210,7 +210,9 @@
 
     let batTrail = [];   // [{x, y, t}]
     let ballTrail = [];  // [{x, y, t}]
-    const MAX_TRAIL_POINTS = 150;
+    const MAX_TRAIL_POINTS = 300;
+    const INTERPOLATION_STEP = 6; // px：插值新增更多點，讓軌跡更密集
+    const SMOOTHING_WINDOW = 5;   // 移動平均視窗，讓軌跡更平滑
 
     const swings = [];
     let swingId = 1;
@@ -321,8 +323,7 @@
           // 中心點
           drawCircle(cx, cy, 6, '#22c55e');
 
-          batTrail.push({ x: cx, y: cy, t: now });
-          if (batTrail.length > MAX_TRAIL_POINTS) batTrail.shift();
+          addTrailPoint(batTrail, { x: cx, y: cy, t: now });
         }
 
         // 處理球
@@ -337,13 +338,12 @@
 
           drawCircle(cx, cy, 6, '#facc15');
 
-          ballTrail.push({ x: cx, y: cy, t: now });
-          if (ballTrail.length > MAX_TRAIL_POINTS) ballTrail.shift();
+          addTrailPoint(ballTrail, { x: cx, y: cy, t: now });
         }
 
         // 畫軌跡
-        drawTrail(batTrail, '#22c55e');
-        drawTrail(ballTrail, '#facc15');
+        drawTrail(smoothTrail(batTrail, SMOOTHING_WINDOW), '#22c55e');
+        drawTrail(smoothTrail(ballTrail, 3), '#facc15');
 
       } catch (err) {
         console.error(err);
@@ -359,6 +359,56 @@
       ctx.arc(x, y, radius, 0, Math.PI * 2);
       ctx.fillStyle = color;
       ctx.fill();
+    }
+
+    // 插值＋截斷，讓軌跡點更密集但不會無限制增長
+    function addTrailPoint(trail, point) {
+      const last = trail[trail.length - 1];
+      if (last) {
+        const dx = point.x - last.x;
+        const dy = point.y - last.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        const extraPoints = Math.floor(dist / INTERPOLATION_STEP);
+        for (let i = 1; i <= extraPoints; i++) {
+          const ratio = i / (extraPoints + 1);
+          trail.push({
+            x: last.x + dx * ratio,
+            y: last.y + dy * ratio,
+            t: last.t + (point.t - last.t) * ratio
+          });
+        }
+      }
+
+      trail.push(point);
+
+      if (trail.length > MAX_TRAIL_POINTS) {
+        trail.splice(0, trail.length - MAX_TRAIL_POINTS);
+      }
+    }
+
+    // 簡易移動平均平滑，降低抖動
+    function smoothTrail(trail, windowSize = 3) {
+      if (trail.length === 0) return [];
+      const smoothed = [];
+      for (let i = 0; i < trail.length; i++) {
+        const start = Math.max(0, i - windowSize + 1);
+        const end = i;
+        let sumX = 0;
+        let sumY = 0;
+        let count = 0;
+        for (let j = start; j <= end; j++) {
+          sumX += trail[j].x;
+          sumY += trail[j].y;
+          count++;
+        }
+        smoothed.push({
+          x: sumX / count,
+          y: sumY / count,
+          t: trail[i].t
+        });
+      }
+      return smoothed;
     }
 
     function drawTrail(points, color) {
@@ -427,9 +477,12 @@
         return;
       }
 
-      const duration = computeDuration(batTrail);
-      const pathLen = computePathLength(batTrail);
-      const angle = computeLaunchAngle(ballTrail);
+      const smoothedBatForMetrics = smoothTrail(batTrail, SMOOTHING_WINDOW);
+      const smoothedBallForMetrics = smoothTrail(ballTrail, 3);
+
+      const duration = computeDuration(smoothedBatForMetrics);
+      const pathLen = computePathLength(smoothedBatForMetrics);
+      const angle = computeLaunchAngle(smoothedBallForMetrics);
 
       const swing = {
         id: swingId++,
