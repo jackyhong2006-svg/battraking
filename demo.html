@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>BatTrack Lab (Prototype)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- TensorFlow.js & models -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui;
+      background: #050816;
+      color: #e5e7eb;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      padding: 0.8rem 1rem;
+      border-bottom: 1px solid #1f2933;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      backdrop-filter: blur(8px);
+      background: rgba(15,23,42,0.9);
+    }
+    header h1 {
+      font-size: 1.1rem;
+      margin: 0;
+    }
+    header span {
+      font-size: 0.8rem;
+      opacity: 0.7;
+    }
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: row;
+      gap: 1rem;
+      padding: 0.8rem;
+      box-sizing: border-box;
+    }
+    @media (max-width: 900px) {
+      main { flex-direction: column; }
+    }
+    .card {
+      background: radial-gradient(circle at top left, #111827, #020617);
+      border-radius: 1rem;
+      border: 1px solid #1f2937;
+      padding: 0.8rem;
+      box-sizing: border-box;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.5);
+    }
+    #leftPane { flex: 2; display: flex; flex-direction: column; gap: 0.5rem; }
+    #rightPane { flex: 1; display: flex; flex-direction: column; gap: 0.5rem; }
+
+    #videoWrapper {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border-radius: 0.75rem;
+      overflow: hidden;
+      background: #000;
+    }
+    #videoElement {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* 鏡像方便打者看自己 */
+    }
+    #overlayCanvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      transform: scaleX(-1);
+    }
+
+    .controls-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.85rem;
+    }
+    button, input[type="range"] {
+      cursor: pointer;
+    }
+    button {
+      border-radius: 999px;
+      border: 1px solid #334155;
+      padding: 0.4rem 0.9rem;
+      background: linear-gradient(135deg, #0f172a, #020617);
+      color: #e5e7eb;
+      font-size: 0.82rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+    button:hover {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 1px rgba(56,189,248,0.4);
+    }
+    .tag {
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid #1d4ed8;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #bfdbfe;
+      background: rgba(37,99,235,0.2);
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2,minmax(0,1fr));
+      gap: 0.5rem;
+      font-size: 0.8rem;
+    }
+    .stat {
+      padding: 0.5rem 0.6rem;
+      border-radius: 0.7rem;
+      background: rgba(15,23,42,0.9);
+      border: 1px solid #111827;
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+    }
+    .stat-label { opacity: 0.7; }
+    .stat-value { font-size: 1rem; font-weight: 600; }
+    .stat-sub { font-size: 0.7rem; opacity: 0.6; }
+
+    .range-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.8rem;
+    }
+    input[type="range"] {
+      flex: 1;
+      accent-color: #38bdf8;
+    }
+    #historyTable {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.72rem;
+    }
+    #historyTable th, #historyTable td {
+      border-bottom: 1px solid #1f2933;
+      padding: 0.25rem 0.35rem;
+      text-align: center;
+    }
+    #historyTable th {
+      position: sticky;
+      top: 0;
+      background: #020617;
+      z-index: 1;
+    }
+    .pill {
+      border-radius: 999px;
+      padding: 0.12rem 0.5rem;
+      font-size: 0.7rem;
+      display: inline-block;
+    }
+    .pill-ok {
+      background: rgba(34,197,94,0.2);
+      color: #bbf7d0;
+    }
+    .pill-bad {
+      background: rgba(248,113,113,0.15);
+      color: #fecaca;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>BatTrack Lab · Prototype</h1>
+    <span>揮棒軌跡 + Launch Angle + ML 預測（Demo）</span>
+  </div>
+  <span class="tag">WebCam · Apple Ready</span>
+</header>
+
+<main>
+  <section id="leftPane" class="card">
+    <div id="videoWrapper">
+      <video id="videoElement" autoplay playsinline muted></video>
+      <canvas id="overlayCanvas"></canvas>
+    </div>
+    <div class="controls-row">
+      <div style="display:flex;gap:0.4rem;align-items:center;">
+        <button id="startBtn">啟動相機</button>
+        <button id="toggleRunBtn">開始偵測</button>
+        <button id="markContactBtn">手動標記擊球</button>
+      </div>
+      <div style="font-size:0.75rem;opacity:0.7;">
+        提示：請把相機放打者側邊，畫面盡量包含腰部以上與球路。
+      </div>
+    </div>
+  </section>
+
+  <section id="rightPane">
+    <div class="card">
+      <div class="controls-row">
+        <strong>本次揮棒數據</strong>
+        <span id="swingIdLabel" style="font-size:0.75rem;opacity:0.7;">尚未偵測</span>
+      </div>
+      <div class="stat-grid" style="margin-top:0.5rem;">
+        <div class="stat">
+          <span class="stat-label">Launch Angle</span>
+          <span class="stat-value" id="laValue">-- °</span>
+          <span class="stat-sub">目標約 10–25°（強勁飛球）</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Bat Speed (估)</span>
+          <span class="stat-value" id="batSpeedValue">-- mph</span>
+          <span class="stat-sub">實際數據需額外校正</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Predicted Distance</span>
+          <span class="stat-value" id="distValue">-- m</span>
+          <span class="stat-sub">由 ML 模型估計（目前是假資料）</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Outcome</span>
+          <span class="stat-value" id="outcomeValue">--</span>
+          <span class="stat-sub">HR / 2B / 1B / OUT …</span>
+        </div>
+      </div>
+
+      <div style="margin-top:0.6rem;">
+        <div class="range-row">
+          <span>打者初速加權</span>
+          <input type="range" id="evWeightRange" min="0.5" max="1.5" value="1" step="0.05" />
+          <span id="evWeightLabel">1.00×</span>
+        </div>
+        <div class="range-row">
+          <span>遊戲分數</span>
+          <span style="font-size:1.4rem;font-weight:700;" id="scoreValue">--</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="flex:1;min-height:0;">
+      <div class="controls-row">
+        <strong>歷史揮棒紀錄</strong>
+        <button id="downloadCsvBtn">下載 CSV</button>
+      </div>
+      <div style="margin-top:0.5rem;overflow:auto;max-height:100%;">
+        <table id="historyTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Angle°</th>
+              <th>BatSpd</th>
+              <th>Dist</th>
+              <th>Result</th>
+              <th>Score</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+  const video = document.getElementById('videoElement');
+  const canvas = document.getElementById('overlayCanvas');
+  const ctx = canvas.getContext('2d');
+
+  let cocoModel = null;
+  let poseDetector = null;
+  let running = false;
+  let hasCamera = false;
+
+  // Tracking state
+  let frameIndex = 0;
+  let prevBall = null;
+  let prevD = null;
+  let prevBallSpeed = null;
+  let hasContact = false;
+  let contactFrame = null;
+
+  let smoothedBat = null;
+  let smoothedBall = null;
+
+  const CONTACT_DIST_THRESHOLD = 40; // 需依實際畫面調整
+  const MIN_SPEED_AFTER_HIT = 8;
+
+  // Swing records
+  let swingId = 0;
+  const swingHistory = [];
+
+  // ===== Util functions =====
+  function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+  }
+  window.addEventListener('resize', resizeCanvas);
+
+  function distance(p1, p2) {
+    if (!p1 || !p2) return Infinity;
+    const dx = p1.x - p2.x;
+    const dy = p1.y - p2.y;
+    return Math.sqrt(dx*dx + dy*dy);
+  }
+
+  function smoothPoint(prev, curr, alpha = 0.3) {
+    if (!curr) return prev;
+    if (!prev) return curr;
+    return {
+      x: alpha * curr.x + (1 - alpha) * prev.x,
+      y: alpha * curr.y + (1 - alpha) * prev.y,
+    };
+  }
+
+  function computeLaunchAngle(ballTrack) {
+    if (ballTrack.length < 3) return null;
+    const first = ballTrack[0];
+    const last = ballTrack[Math.min(5, ballTrack.length - 1)];
+
+    const Yh = canvas.height - first.y;
+    const Yh2 = canvas.height - last.y;
+    const dx = last.x - first.x;
+    const dy = Yh2 - Yh;
+
+    if (Math.abs(dx) < 1e-3 && Math.abs(dy) < 1e-3) return null;
+    const ang = Math.atan2(dy, dx) * 180 / Math.PI;
+    return ang;
+  }
+
+  function computeScore(ev, la, weight) {
+    if (ev == null || la == null) return null;
+    const idealCenter = (10 + 25) / 2;
+    const angleScore = Math.max(0, 1 - Math.abs(la - idealCenter) / 20);
+    const evScore = Math.min(ev / 110, 1);
+    const raw = (0.6 * evScore * weight + 0.4 * angleScore) * 100;
+    return Math.round(raw);
+  }
+
+  // 把揮棒記錄顯示在表格
+  function renderHistory() {
+    const body = document.getElementById('historyBody');
+    body.innerHTML = '';
+    swingHistory.slice().reverse().forEach(rec => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${rec.id}</td>
+        <td>${rec.launchAngle?.toFixed(1) ?? '--'}</td>
+        <td>${rec.batSpeed?.toFixed(1) ?? '--'}</td>
+        <td>${rec.predictedDistance?.toFixed(1) ?? '--'}</td>
+        <td><span class="pill ${rec.outcome === 'HR' ? 'pill-ok' : 'pill-bad'}">${rec.outcome}</span></td>
+        <td>${rec.score ?? '--'}</td>
+      `;
+      body.appendChild(tr);
+    });
+  }
+
+  // ===== Camera setup =====
+  async function initCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment'
+        },
+        audio: false
+      });
+      video.srcObject = stream;
+      await new Promise(res => video.onloadedmetadata = res);
+      resizeCanvas();
+      hasCamera = true;
+    } catch (err) {
+      alert('無法開啟相機，請確認權限與 HTTPS 網站（iOS 必須 https）。\n' + err.message);
+    }
+  }
+
+  async function loadModels() {
+    if (!cocoModel) {
+      cocoModel = await cocoSsd.load();
+    }
+    if (!poseDetector) {
+      const detectorConfig = {
+        modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+      };
+      poseDetector = await poseDetection.createDetector(
+        poseDetection.SupportedModels.MoveNet,
+        detectorConfig
+      );
+    }
+  }
+
+  // ===== Main detection loop =====
+  let detectionLoopRunning = false;
+  let ballTrackAfterContact = [];
+  let currentBatSpeedEst = null;
+
+  async function detectLoop() {
+    if (!running || !hasCamera) {
+      detectionLoopRunning = false;
+      return;
+    }
+    detectionLoopRunning = true;
+
+    if (video.readyState === 4 && cocoModel) {
+      ctx.clearRect(0,0,canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // COCO-SSD: detect ball & bat
+      const predictions = await cocoModel.detect(canvas);
+      let ball = null;
+      let bat = null;
+      predictions.forEach(p => {
+        const cls = p.class.toLowerCase();
+        const [x, y, w, h] = p.bbox;
+        if (cls.includes('sports ball') || cls.includes('ball')) {
+          ball = { x: x + w/2, y: y + h/2, bbox: p.bbox, score: p.score };
+        }
+        if (cls.includes('bat')) {
+          bat = { x: x + w/2, y: y + h/2, bbox: p.bbox, score: p.score };
+        }
+      });
+
+      // Pose detection（這裡 demo 只畫，不做分析）
+      if (poseDetector) {
+        const poses = await poseDetector.estimatePoses(video, {
+          maxPoses: 1,
+          flipHorizontal: true
+        });
+        if (poses[0]) {
+          const kp = poses[0].keypoints;
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = 'rgba(56,189,248,0.7)';
+          ctx.fillStyle = 'rgba(59,130,246,0.9)';
+          kp.forEach(pt => {
+            if (pt.score > 0.5) {
+              ctx.beginPath();
+              ctx.arc(pt.x, pt.y, 3, 0, Math.PI*2);
+              ctx.fill();
+            }
+          });
+        }
+      }
+
+      // Smoothing & drawing tracks
+      smoothedBat = smoothPoint(smoothedBat, bat);
+      smoothedBall = smoothPoint(smoothedBall, ball);
+
+      // 繪製球棒與球
+      if (smoothedBat) {
+        ctx.fillStyle = 'rgba(244,114,182,0.9)';
+        ctx.beginPath();
+        ctx.arc(smoothedBat.x, smoothedBat.y, 6, 0, Math.PI*2);
+        ctx.fill();
+      }
+      if (smoothedBall) {
+        ctx.fillStyle = 'rgba(52,211,153,0.9)';
+        ctx.beginPath();
+        ctx.arc(smoothedBall.x, smoothedBall.y, 5, 0, Math.PI*2);
+        ctx.fill();
+      }
+
+      // Contact detection
+      if (smoothedBall && smoothedBat) {
+        const d = distance(smoothedBall, smoothedBat);
+        const v = prevBall ? distance(smoothedBall, prevBall) : 0;
+
+        const approaching = prevD && d < prevD;
+        const veryClose = d < CONTACT_DIST_THRESHOLD;
+        const speedJump = prevBallSpeed && v > prevBallSpeed * 2 && v > MIN_SPEED_AFTER_HIT;
+
+        if (!hasContact && approaching && veryClose && speedJump) {
+          hasContact = true;
+          contactFrame = frameIndex;
+          ballTrackAfterContact = [];
+          console.log('Auto contact at frame', frameIndex);
+        }
+
+        prevD = d;
+        prevBallSpeed = v;
+        prevBall = { ...smoothedBall };
+      }
+
+      // 只有 contact 之後才記錄球軌跡
+      if (hasContact && smoothedBall) {
+        ballTrackAfterContact.push({ x: smoothedBall.x, y: smoothedBall.y, frame: frameIndex });
+      }
+
+      // 粗略估計球棒速度（contact 之後前幾禎）
+      if (smoothedBat && prevBatForSpeed) {
+        const vb = distance(smoothedBat, prevBatForSpeed);
+        // 這裡只是 demo，實際要校正成 m/s、mph
+        currentBatSpeedEst = vb * 0.8;
+      }
+      prevBatForSpeed = smoothedBat ? { ...smoothedBat } : null;
+
+      // 畫軌跡線
+      if (ballTrackAfterContact.length > 1) {
+        ctx.strokeStyle = 'rgba(52,211,153,0.6)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        const first = ballTrackAfterContact[0];
+        ctx.moveTo(first.x, first.y);
+        for (let i = 1; i < ballTrackAfterContact.length; i++) {
+          const p = ballTrackAfterContact[i];
+          ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+      }
+    }
+
+    frameIndex++;
+    requestAnimationFrame(detectLoop);
+  }
+
+  let prevBatForSpeed = null;
+
+  // ===== Swing finalization =====
+  function finalizeSwing(manual = false) {
+    if (!ballTrackAfterContact.length) {
+      console.log('No ball track after contact');
+      return;
+    }
+    swingId += 1;
+    const la = computeLaunchAngle(ballTrackAfterContact);
+    const evWeight = parseFloat(document.getElementById('evWeightRange').value);
+    const batSpeed = currentBatSpeedEst ?? 60; // demo
+    const evEst = batSpeed * 0.9; // 假設球速跟棒速有線性關係（只是 demo）
+
+    // 這裡先隨便估距離 & 結果，之後改成用你訓練的模型
+    const predictedDistance = evEst * Math.max(Math.sin((la || 0) * Math.PI/180), 0) * 1.2;
+    const outcome = predictedDistance > 110 ? 'HR' : (predictedDistance > 70 ? '2B' : 'OUT');
+    const score = computeScore(evEst, la, evWeight);
+
+    const rec = {
+      id: swingId,
+      launchAngle: la,
+      batSpeed: batSpeed,
+      predictedDistance,
+      outcome,
+      score,
+      contactFrame,
+      ballTrack: ballTrackAfterContact.slice()
+    };
+    swingHistory.push(rec);
+    renderHistory();
+
+    // 更新右側即時顯示
+    document.getElementById('swingIdLabel').textContent = `Swing #${swingId}`;
+    document.getElementById('laValue').textContent = la != null ? la.toFixed(1) + '°' : '--';
+    document.getElementById('batSpeedValue').textContent = batSpeed.toFixed(1) + ' mph*';
+    document.getElementById('distValue').textContent = predictedDistance.toFixed(1) + ' m*';
+    document.getElementById('outcomeValue').textContent = outcome;
+    document.getElementById('scoreValue').textContent = score ?? '--';
+
+    // reset for next swing
+    hasContact = false;
+    contactFrame = null;
+    ballTrackAfterContact = [];
+    prevBall = null;
+    prevD = null;
+    prevBallSpeed = null;
+    smoothedBall = null;
+    currentBatSpeedEst = null;
+  }
+
+  // ===== CSV Download =====
+  function downloadCsv() {
+    if (!swingHistory.length) return;
+    const header = ['id','launchAngle','batSpeed','predictedDistance','outcome','score'];
+    const rows = swingHistory.map(r => [
+      r.id,
+      r.launchAngle ?? '',
+      r.batSpeed ?? '',
+      r.predictedDistance ?? '',
+      r.outcome ?? '',
+      r.score ?? ''
+    ]);
+    const csv = [header.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'battrack_swings.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // ===== UI bindings =====
+  document.getElementById('startBtn').addEventListener('click', async () => {
+    if (!hasCamera) await initCamera();
+    await loadModels();
+  });
+
+  document.getElementById('toggleRunBtn').addEventListener('click', () => {
+    running = !running;
+    document.getElementById('toggleRunBtn').textContent = running ? '停止偵測' : '開始偵測';
+    if (running && !detectionLoopRunning) detectLoop();
+  });
+
+  // 手動標記一個擊球（如果自動偵測不到可以用這個）
+  document.getElementById('markContactBtn').addEventListener('click', () => {
+    if (!hasContact) {
+      hasContact = true;
+      contactFrame = frameIndex;
+      ballTrackAfterContact = [];
+      console.log('Manual contact mark at frame', frameIndex);
+    } else {
+      finalizeSwing(true);
+    }
+  });
+
+  document.getElementById('evWeightRange').addEventListener('input', (e) => {
+    const val = parseFloat(e.target.value);
+    document.getElementById('evWeightLabel').textContent = val.toFixed(2) + '×';
+  });
+
+  document.getElementById('downloadCsvBtn').addEventListener('click', downloadCsv);
+
+  // 初始 canvas 尺寸
+  window.addEventListener('load', resizeCanvas);
+</script>
+</body>
+</html>
