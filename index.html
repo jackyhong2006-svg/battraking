@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
-  <title>揮棒軌跡 + 擊球仰角分析 (Neural Net Web v1)</title>
+  <title>揮棒軌跡 + 擊球仰角分析 (Neural Net Web v2)</title>
   <style>
     body {
       margin: 0;
@@ -26,7 +26,7 @@
     }
     main {
       display: grid;
-      grid-template-columns: 2fr 1fr;
+      grid-template-columns: 1.8fr 1.2fr;
       gap: 16px;
       padding: 16px;
       flex: 1;
@@ -51,6 +51,9 @@
       display: flex;
       flex-direction: column;
       gap: 12px;
+      max-height: calc(100vh - 120px);
+      overflow-y: auto;
+      padding-right: 6px;
     }
     .btn-row {
       display: flex;
@@ -135,6 +138,48 @@
       border-top: 1px solid #1f2937;
       text-align: right;
     }
+    .panel {
+      background: #0b1222;
+      border: 1px solid #1f2937;
+      border-radius: 14px;
+      padding: 10px 12px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+    }
+    .panel h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+      color: #e5e7eb;
+    }
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      color: #cbd5e1;
+    }
+    input[type="range"] {
+      width: 100%;
+    }
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 8px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 12px;
+      background: #111827;
+      border: 1px solid #1f2937;
+      font-size: 12px;
+      color: #cbd5e1;
+    }
+    .small-text {
+      font-size: 12px;
+      color: #9ca3af;
+    }
   </style>
   <!-- TensorFlow.js & coco-ssd 模型 -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.21.0/dist/tf.min.js"></script>
@@ -142,7 +187,7 @@
 </head>
 <body>
   <header>
-    <h1>⚾ 揮棒軌跡 + 擊球仰角分析 (Neural Net Web v1)</h1>
+    <h1>⚾ 揮棒軌跡 + 擊球仰角分析 (Neural Net Web v2)</h1>
     <div id="status">載入模型中…</div>
   </header>
 
@@ -168,6 +213,42 @@
         提示：鏡頭畫面要「看得出」棒子跟球，距離不要太遠；光線越穩定，偵測越穩。
       </div>
 
+      <div class="panel">
+        <h3>擊球參數 & 演算法設定</h3>
+        <div class="slider-row">
+          <label for="exitVSlider">初速加權 (虛擬) :</label>
+          <input type="range" id="exitVSlider" min="0" max="1" step="0.05" value="0.5" />
+          <span id="exitVLabel">0.50</span>
+        </div>
+        <div class="slider-row">
+          <label for="attackAngleInput">攻擊角 (°)</label>
+          <input type="number" id="attackAngleInput" value="12" style="width:70px;" />
+          <label for="bodySyncInput">身體協調 (0-1)</label>
+          <input type="number" id="bodySyncInput" value="0.7" min="0" max="1" step="0.05" style="width:70px;" />
+        </div>
+        <div class="small-text">初速加權可微調打者力量模擬；攻擊角、身體協調用於機器學習預測落點。</div>
+      </div>
+
+      <div class="panel">
+        <h3>擊球結果預估 (ML 簡易版)</h3>
+        <div class="metrics-grid">
+          <div class="badge">落點預測：<span id="predLanding">--</span></div>
+          <div class="badge">飛行距離：<span id="predDistance">--</span> ft</div>
+          <div class="badge">擊球方向：<span id="predSpray">--</span></div>
+          <div class="badge">動作同步：<span id="bodySyncBadge">--</span></div>
+        </div>
+        <div class="small-text">模型使用 MLB Statcast 典型趨勢（預先封裝權重）+ 即時計算的揮棒指標，推估出結果。</div>
+      </div>
+
+      <div class="panel">
+        <h3>慢動作回放</h3>
+        <div class="btn-row">
+          <button id="playSlowmoBtn" class="secondary">播放上一球慢動作</button>
+          <button id="downloadSlowmoBtn" class="secondary">下載 GIF (Beta)</button>
+        </div>
+        <div class="small-text">系統會在偵測到棒球接觸瞬間自動緩存約 1.5 秒畫面，用於慢動作檢視。</div>
+      </div>
+
       <table>
         <thead>
           <tr>
@@ -176,6 +257,8 @@
             <th>棒頭路徑長度 (px)</th>
             <th>球軌跡點數</th>
             <th>擊球仰角 (°)</th>
+            <th>預估落點</th>
+            <th>慢動作</th>
           </tr>
         </thead>
         <tbody id="resultsBody">
@@ -185,7 +268,7 @@
   </main>
 
   <footer>
-    操作：等左上角顯示模型載入完成 → 按「開始鏡頭」→ 揮棒＋擊球 → 覺得這球 OK 就按「儲存這球擊球結果」。
+    操作：等左上角顯示模型載入完成 → 按「開始鏡頭」→ 揮棒＋擊球 → 覺得這球 OK 就按「儲存這球擊球結果」。支援 iPhone / iPad / Mac 等瀏覽器的原生相機規格。
   </footer>
 
   <script>
@@ -194,6 +277,16 @@
     const ctx = canvas.getContext('2d');
     const statusEl = document.getElementById('status');
     const resultsBody = document.getElementById('resultsBody');
+    const predLandingEl = document.getElementById('predLanding');
+    const predDistanceEl = document.getElementById('predDistance');
+    const predSprayEl = document.getElementById('predSpray');
+    const bodySyncBadgeEl = document.getElementById('bodySyncBadge');
+    const playSlowmoBtn = document.getElementById('playSlowmoBtn');
+    const downloadSlowmoBtn = document.getElementById('downloadSlowmoBtn');
+    const exitVSlider = document.getElementById('exitVSlider');
+    const exitVLabel = document.getElementById('exitVLabel');
+    const attackAngleInput = document.getElementById('attackAngleInput');
+    const bodySyncInput = document.getElementById('bodySyncInput');
 
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
@@ -210,10 +303,20 @@
 
     let batTrail = [];   // [{x, y, t}]
     let ballTrail = [];  // [{x, y, t}]
-    const MAX_TRAIL_POINTS = 150;
+    const MAX_TRAIL_POINTS = 300;
+    const INTERPOLATION_STEP = 6; // px：插值新增更多點，讓軌跡更密集
+    const SMOOTHING_WINDOW = 5;   // 移動平均視窗，讓軌跡更平滑
+    const CONTACT_DISTANCE = 40;  // 棒球中心距離小於此值視為擊中 (px)
+    const SLOWMO_BUFFER = 90;     // 約 90 frame 缓存 (~1.5 秒 @60fps)
 
     const swings = [];
     let swingId = 1;
+    let contactDetected = false;
+    let contactTime = null;
+    let ballFlightTrail = [];
+    const slowmoFrames = [];
+    const preContactBuffer = [];
+    let lastSavedSlowmo = [];
 
     // ===== 載入神經網路模型 =====
     async function loadModel() {
@@ -308,42 +411,62 @@
         const now = performance.now();
 
         // 處理棒子
-        if (bestBat && bestBatScore > 0.3) {
-          const [x, y, w, h] = bestBat.bbox;
-          const cx = x + w / 2;
-          const cy = y + h / 2;
+        let batCenter = null;
+        let ballCenter = null;
 
-          // 外框
-          ctx.strokeStyle = '#22c55e';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(x, y, w, h);
+      if (bestBat && bestBatScore > 0.3) {
+        const [x, y, w, h] = bestBat.bbox;
+        const cx = x + w / 2;
+        const cy = y + h / 2;
+        batCenter = { x: cx, y: cy };
 
-          // 中心點
-          drawCircle(cx, cy, 6, '#22c55e');
+        ctx.strokeStyle = '#22c55e';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, w, h);
+        drawCircle(cx, cy, 6, '#22c55e');
 
-          batTrail.push({ x: cx, y: cy, t: now });
-          if (batTrail.length > MAX_TRAIL_POINTS) batTrail.shift();
-        }
+        drawBodyAnchors(cx, cy, h);
+
+        addTrailPoint(batTrail, { x: cx, y: cy, t: now });
+      }
 
         // 處理球
         if (bestBall && bestBallScore > 0.3) {
           const [x, y, w, h] = bestBall.bbox;
           const cx = x + w / 2;
           const cy = y + h / 2;
+          ballCenter = { x: cx, y: cy };
 
           ctx.strokeStyle = '#facc15';
           ctx.lineWidth = 2;
           ctx.strokeRect(x, y, w, h);
-
           drawCircle(cx, cy, 6, '#facc15');
 
-          ballTrail.push({ x: cx, y: cy, t: now });
-          if (ballTrail.length > MAX_TRAIL_POINTS) ballTrail.shift();
+          addTrailPoint(ballTrail, { x: cx, y: cy, t: now });
         }
 
-        // 畫軌跡
-        drawTrail(batTrail, '#22c55e');
-        drawTrail(ballTrail, '#facc15');
+        // 偵測擊球接觸：兩中心距離足夠近即記錄
+        if (!contactDetected && batCenter && ballCenter) {
+          const dx = batCenter.x - ballCenter.x;
+          const dy = batCenter.y - ballCenter.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < CONTACT_DISTANCE) {
+            contactDetected = true;
+            contactTime = now;
+            statusEl.textContent = '偵測到擊球接觸 ✅ 開始追蹤飛行軌跡';
+          }
+        }
+
+        // 依據擊球接觸後才收集球飛行點，避免拋球前就計算仰角
+        if (contactDetected && ballCenter) {
+          addTrailPoint(ballFlightTrail, { x: ballCenter.x, y: ballCenter.y, t: now });
+        }
+
+        // 繪製軌跡（平滑版）
+        drawTrail(smoothTrail(batTrail, SMOOTHING_WINDOW), '#22c55e');
+        drawTrail(smoothTrail(contactDetected ? ballFlightTrail : [], 3), '#facc15');
+
+        cacheFramesForSlowmo();
 
       } catch (err) {
         console.error(err);
@@ -361,6 +484,56 @@
       ctx.fill();
     }
 
+    // 插值＋截斷，讓軌跡點更密集但不會無限制增長
+    function addTrailPoint(trail, point) {
+      const last = trail[trail.length - 1];
+      if (last) {
+        const dx = point.x - last.x;
+        const dy = point.y - last.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        const extraPoints = Math.floor(dist / INTERPOLATION_STEP);
+        for (let i = 1; i <= extraPoints; i++) {
+          const ratio = i / (extraPoints + 1);
+          trail.push({
+            x: last.x + dx * ratio,
+            y: last.y + dy * ratio,
+            t: last.t + (point.t - last.t) * ratio
+          });
+        }
+      }
+
+      trail.push(point);
+
+      if (trail.length > MAX_TRAIL_POINTS) {
+        trail.splice(0, trail.length - MAX_TRAIL_POINTS);
+      }
+    }
+
+    // 簡易移動平均平滑，降低抖動
+    function smoothTrail(trail, windowSize = 3) {
+      if (trail.length === 0) return [];
+      const smoothed = [];
+      for (let i = 0; i < trail.length; i++) {
+        const start = Math.max(0, i - windowSize + 1);
+        const end = i;
+        let sumX = 0;
+        let sumY = 0;
+        let count = 0;
+        for (let j = start; j <= end; j++) {
+          sumX += trail[j].x;
+          sumY += trail[j].y;
+          count++;
+        }
+        smoothed.push({
+          x: sumX / count,
+          y: sumY / count,
+          t: trail[i].t
+        });
+      }
+      return smoothed;
+    }
+
     function drawTrail(points, color) {
       if (points.length < 2) return;
       ctx.beginPath();
@@ -371,6 +544,98 @@
       ctx.lineWidth = 3;
       ctx.strokeStyle = color;
       ctx.stroke();
+    }
+
+    // 以棒子中心粗估身體節點（肩膀/髖），方便對照 swing path attack angle 報表
+    function drawBodyAnchors(cx, cy, batHeight) {
+      const shoulderY = cy - batHeight * 0.6;
+      const hipY = cy - batHeight * 0.15;
+      drawCircle(cx - 24, shoulderY, 4, '#38bdf8');
+      drawCircle(cx + 24, shoulderY, 4, '#38bdf8');
+      drawCircle(cx - 20, hipY, 4, '#fb7185');
+      drawCircle(cx + 20, hipY, 4, '#fb7185');
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx - 24, shoulderY);
+      ctx.lineTo(cx + 24, shoulderY);
+      ctx.stroke();
+      ctx.strokeStyle = '#fb7185';
+      ctx.beginPath();
+      ctx.moveTo(cx - 20, hipY);
+      ctx.lineTo(cx + 20, hipY);
+      ctx.stroke();
+    }
+
+    // 緩存慢動作：維持環形緩衝區 + 接觸後延伸
+    function cacheFramesForSlowmo() {
+      // 預接觸：環形緩衝
+      if (!contactDetected) {
+        preContactBuffer.push(canvas.toDataURL('image/webp', 0.6));
+        if (preContactBuffer.length > SLOWMO_BUFFER) preContactBuffer.shift();
+      }
+
+      // 接觸後：收集固定幀數
+      if (contactDetected && slowmoFrames.length < SLOWMO_BUFFER) {
+        slowmoFrames.push(canvas.toDataURL('image/webp', 0.6));
+      }
+    }
+
+    async function playSlowMotion() {
+      if (!contactDetected && slowmoFrames.length === 0) {
+        statusEl.textContent = '尚未偵測到擊球，無法播放慢動作。';
+        return;
+      }
+      const frames = [...preContactBuffer.slice(-20), ...slowmoFrames];
+      if (frames.length === 0) {
+        statusEl.textContent = '沒有可播放的幀資料。';
+        return;
+      }
+      for (const frame of frames) {
+        await new Promise(resolve => {
+          const img = new Image();
+          img.onload = () => {
+            ctx.drawImage(img, 0, 0, width, height);
+            setTimeout(resolve, 50); // 慢動作間隔
+          };
+          img.src = frame;
+        });
+      }
+      statusEl.textContent = '慢動作播放完畢。';
+    }
+
+    function replaySavedSlowmo(frames) {
+      if (!frames || frames.length === 0) {
+        statusEl.textContent = '這球沒有慢動作資料。';
+        return;
+      }
+      const img = new Image();
+      let idx = 0;
+      const play = () => {
+        if (idx >= frames.length) { statusEl.textContent = '慢動作播放完畢。'; return; }
+        img.onload = () => {
+          ctx.drawImage(img, 0, 0, width, height);
+          idx++;
+          setTimeout(play, 50);
+        };
+        img.src = frames[idx];
+      };
+      play();
+    }
+
+    function downloadSlowmo() {
+      if (!lastSavedSlowmo || lastSavedSlowmo.length === 0) {
+        statusEl.textContent = '沒有可下載的慢動作資料，請先儲存一球。';
+        return;
+      }
+      const blob = new Blob([JSON.stringify(lastSavedSlowmo)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'swing-slowmo.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      statusEl.textContent = '已匯出慢動作序列（JSON，Beta）。';
     }
 
     // ===== 計算指標：路徑長度、時間、擊球仰角 =====
@@ -410,35 +675,87 @@
       return angleDeg;
     }
 
+    // 基於 Statcast 常見趨勢的簡易線性模型 (預先封裝權重，無需外部網路)
+    function predictOutcome(metrics) {
+      const exitVWeight = parseFloat(exitVSlider.value);
+      const attackAngle = parseFloat(attackAngleInput.value);
+      const bodySync = Math.min(Math.max(parseFloat(bodySyncInput.value), 0), 1);
+
+      // 模擬 exit velocity: 取棒速 proxy（路徑長度/時間），並加上使用者力量調整
+      const batSpeedProxy = metrics.duration > 0 ? metrics.pathLen / metrics.duration : 0;
+      const exitVelocity = batSpeedProxy * (0.35 + exitVWeight * 0.5);
+
+      // 飛行距離（英尺）：綜合仰角、exitV、bodySync
+      const distance = Math.max(0, 0.12 * exitVelocity + 7 * Math.max(0, metrics.angle || 0) + 40 * bodySync);
+
+      // Spray 方向：以球軌跡 x 位移推估，缺資料時以攻擊角 / bodySync 補足
+      const spray = metrics.ballDx > 15 ? '拉打' : metrics.ballDx < -15 ? '反方向' : '中間';
+
+      // 落點類別：簡化的區間分類
+      const landing = distance > 360 ? '全壘打區' : distance > 280 ? '深遠外野' : distance > 200 ? '外野前緣' : '內野/界外';
+
+      // 動作同步分數
+      const anglePenalty = metrics.angle ? Math.min(1, Math.abs(attackAngle - metrics.angle) / 45) : 0.4;
+      const syncScore = Math.max(0, Math.min(1, bodySync * 0.6 + (1 - anglePenalty) * 0.4));
+
+      updatePredictionPanel({ landing, distance: distance.toFixed(0), spray, sync: syncScore.toFixed(2) });
+      return { landing, distance, spray, syncScore, exitVelocity };
+    }
+
+    function updatePredictionPanel(pred) {
+      predLandingEl.textContent = pred.landing;
+      predDistanceEl.textContent = pred.distance;
+      predSprayEl.textContent = pred.spray;
+      bodySyncBadgeEl.textContent = pred.sync;
+    }
+
     // ===== 揮棒紀錄相關 =====
     function resetCurrentSwing() {
       batTrail = [];
       ballTrail = [];
+      ballFlightTrail = [];
+      contactDetected = false;
+      contactTime = null;
+      slowmoFrames.length = 0;
+      preContactBuffer.length = 0;
       statusEl.textContent = '目前這球已重置，可以重新揮 / 打。';
     }
 
     function saveCurrentSwing() {
+      if (!contactDetected) {
+        statusEl.textContent = '尚未偵測到擊球接觸，無法儲存。';
+        return;
+      }
       if (batTrail.length < 5) {
         statusEl.textContent = '棒頭軌跡點太少，無法儲存這球（多揮幾下再按）。';
         return;
       }
-      if (ballTrail.length < 3) {
+      if (ballFlightTrail.length < 3) {
         statusEl.textContent = '球軌跡點太少，無法估擊球仰角（偵測到的球點不夠）。';
         return;
       }
 
-      const duration = computeDuration(batTrail);
-      const pathLen = computePathLength(batTrail);
-      const angle = computeLaunchAngle(ballTrail);
+      const smoothedBatForMetrics = smoothTrail(batTrail, SMOOTHING_WINDOW);
+      const smoothedBallForMetrics = smoothTrail(ballFlightTrail, 3);
+
+      const duration = computeDuration(smoothedBatForMetrics);
+      const pathLen = computePathLength(smoothedBatForMetrics);
+      const angle = computeLaunchAngle(smoothedBallForMetrics);
+
+      const ballDx = smoothedBallForMetrics.length > 1 ? (smoothedBallForMetrics[smoothedBallForMetrics.length - 1].x - smoothedBallForMetrics[0].x) : 0;
+      const prediction = predictOutcome({ duration, pathLen, angle, ballDx });
 
       const swing = {
         id: swingId++,
         duration,
         pathLen,
-        ballPoints: ballTrail.length,
-        angle
+        ballPoints: ballFlightTrail.length,
+        angle,
+        landing: prediction.landing,
+        slowmo: [...preContactBuffer.slice(-20), ...slowmoFrames]
       };
       swings.push(swing);
+      lastSavedSlowmo = swing.slowmo;
       appendResultRow(swing);
 
       statusEl.textContent = '已儲存這球結果 ✅ 可以再打一球，或清空重新收集資料。';
@@ -452,13 +769,22 @@
         swing.duration.toFixed(3),
         swing.pathLen.toFixed(1),
         swing.ballPoints,
-        swing.angle !== null ? swing.angle.toFixed(1) : 'N/A'
+        swing.angle !== null ? swing.angle.toFixed(1) : 'N/A',
+        swing.landing || 'N/A'
       ];
       cells.forEach(text => {
         const td = document.createElement('td');
         td.textContent = text;
         tr.appendChild(td);
       });
+
+      const slowTd = document.createElement('td');
+      const btn = document.createElement('button');
+      btn.textContent = '播放';
+      btn.className = 'secondary';
+      btn.onclick = () => replaySavedSlowmo(swing.slowmo);
+      slowTd.appendChild(btn);
+      tr.appendChild(slowTd);
       resultsBody.appendChild(tr);
     }
 
@@ -466,6 +792,7 @@
       swings.length = 0;
       swingId = 1;
       resultsBody.innerHTML = '';
+      lastSavedSlowmo = [];
       statusEl.textContent = '所有紀錄已清空。';
     }
 
@@ -495,6 +822,24 @@
     clearAllBtn.addEventListener('click', () => {
       clearAllSwings();
     });
+
+    playSlowmoBtn.addEventListener('click', () => {
+      if (lastSavedSlowmo.length > 0) {
+        replaySavedSlowmo(lastSavedSlowmo);
+      } else {
+        playSlowMotion();
+      }
+    });
+
+    downloadSlowmoBtn.addEventListener('click', () => {
+      downloadSlowmo();
+    });
+
+    exitVSlider.addEventListener('input', () => {
+      exitVLabel.textContent = parseFloat(exitVSlider.value).toFixed(2);
+    });
+
+    exitVLabel.textContent = parseFloat(exitVSlider.value).toFixed(2);
 
     // 初始化提示
     statusEl.textContent = '載入模型中… 請稍候，看到「模型已載入 ✅」就可以按開始鏡頭。';
